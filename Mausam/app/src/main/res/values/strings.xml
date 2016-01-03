@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Weather</string>
+
+    <string name="action_settings">Settings</string>
+    <string name="forecast">Forecast</string>
+    <string name="wind_and_pressure">Wind &amp; Pressure</string>
+    <string name="wind">Wind</string>
+    <string name="barometer">Barometer</string>
+    <string name="speed_unit">km/hr</string>
+    <string name="pressure_unit">mBar</string>
+    <string name="weather_icon">Weather Icon</string>
+    <string name="something_wrong_message">Oops! Something went wrong. Please Try again.</string>
+    <string name="no_network_message">No Network! Check your connection.</string>
+</resources>
