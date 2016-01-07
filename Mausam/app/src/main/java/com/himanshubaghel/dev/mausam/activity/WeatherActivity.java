@@ -223,9 +223,9 @@ public class WeatherActivity extends AppCompatActivity {
                     if (response.isSuccess()) {
                         WeatherModel weatherModel = response.body();
                         //Updating the UI with latest weather data
-                        updateUI(weatherModel);
                         PreferenceUtils.setWeatherModel(weatherModel);
                         PreferenceUtils.setLastUpdatedTime(System.currentTimeMillis());
+                        updateUI(weatherModel);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
