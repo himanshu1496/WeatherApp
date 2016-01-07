@@ -3,17 +3,16 @@ package com.himanshubaghel.dev.mausam.activity;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.v4.widget.NestedScrollView;
 import android.support.v4.widget.SwipeRefreshLayout;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.CardView;
-import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,6 +28,7 @@ import com.himanshubaghel.dev.mausam.model.WeatherModel;
 import com.himanshubaghel.dev.mausam.utils.Constants;
 import com.himanshubaghel.dev.mausam.utils.Methods;
 import com.himanshubaghel.dev.mausam.utils.MyLocation;
+import com.himanshubaghel.dev.mausam.utils.PreferenceUtils;
 import com.himanshubaghel.dev.mausam.utils.WrappingLinearLayoutManager;
 
 import java.util.ArrayList;
@@ -42,7 +42,10 @@ import retrofit.Retrofit;
 
 public class WeatherActivity extends AppCompatActivity {
 
+    final static long WEATHER_UPDATE_INTERVAL = 15 * 60 * 1000;  //15 minute in milli seconds
     Toolbar toolbar;
+    TextView tvToolBarTitle;
+    TextView tvLastUpdatedTime;
     RecyclerView forecastListView;
     ForecastListAdapter adapter;
     List<Forecast> forecastList;
@@ -59,7 +62,15 @@ public class WeatherActivity extends AppCompatActivity {
     SwipeRefreshLayout swipeRefreshLayout;
     RetrofitInterface service;
     Call<WeatherModel> retrofitCall;
+    MyLocation.LocationResult locationResult = new MyLocation.LocationResult() {
+        @Override
+        public void gotLocation(Location location) {
+            if (location != null) {
+                fetchWeatherData(location);
+            }
 
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +79,8 @@ public class WeatherActivity extends AppCompatActivity {
         toolbar = (Toolbar) findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
+        tvToolBarTitle = (TextView) findViewById(R.id.tvToolbarTitle);
+        tvLastUpdatedTime = (TextView) findViewById(R.id.tvToolbarLastUpdatedTime);
         swipeRefreshLayout = (SwipeRefreshLayout) findViewById(R.id.swipeContainer);
         forecastListView = (RecyclerView) findViewById(R.id.forecastListView);
         tvWeatherCondition = (TextView) findViewById(R.id.tvWeatherCondition);
@@ -90,14 +103,14 @@ public class WeatherActivity extends AppCompatActivity {
         adapter = new ForecastListAdapter(forecastList, WeatherActivity.this);
         forecastListView.setAdapter(adapter);
 
+        //setting top margin dynamically based on device height
+        int height = getWindowManager().getDefaultDisplay().getHeight();
+        LinearLayout.LayoutParams layoutParams = (LinearLayout.LayoutParams) rlCurrentCondition.getLayoutParams();
+        layoutParams.setMargins(0, height / 2, 0, 10);
 
-        updateLocation();
         swipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
             @Override
             public void onRefresh() {
-                // Your code to refresh the list here.
-                // Make sure you call swipeContainer.setRefreshing(false)
-                // once the network request has completed successfully.
                 updateLocation();
             }
         });
@@ -111,11 +124,23 @@ public class WeatherActivity extends AppCompatActivity {
                 .build();
         service = retrofit.create(RetrofitInterface.class);
 
+        //Checking to call update location function for first time on loading activity, only if it's been old enough data
+        if (System.currentTimeMillis() - PreferenceUtils.getLastUpdatedTimeInMillis() > WEATHER_UPDATE_INTERVAL) {
+            updateLocation();
+        }
+
+        //Updating the UI if has previously loaded data
+        if (PreferenceUtils.getWeatherModel() != null) {
+            updateUI(PreferenceUtils.getWeatherModel());
+        }
     }
 
     void updateUI(WeatherModel weatherModel){
-        toolbar.setTitle(weatherModel.getQuery().getResults().getChannel().getTitle());
-
+        //toolbar.setTitle(weatherModel.getQuery().getResults().getChannel().getTitle());
+        tvToolBarTitle.setText(weatherModel.getQuery().getResults().getChannel().getTitle());
+        tvLastUpdatedTime.setVisibility(View.VISIBLE);
+        String updatedTime = "Last updated at " + Methods.formateCalenderToDateTimeString(PreferenceUtils.getLastUpdatedTimeInMillis());
+        tvLastUpdatedTime.setText(updatedTime);
         try{
             Item item = weatherModel.getQuery().getResults().getChannel().getItem();
             Forecast forecast = item.getForecast().get(0);
@@ -145,19 +170,27 @@ public class WeatherActivity extends AppCompatActivity {
             cvForecastView.setVisibility(View.GONE);
             Toast.makeText(getApplicationContext(), getString(R.string.something_wrong_message),Toast.LENGTH_LONG).show();
         }
-
-
     }
 
     void updateLocation(){
         if (Methods.isNetworkAvailable(getApplicationContext())){
             MyLocation myLocation = new MyLocation();
             myLocation.getLocation(this, locationResult);
+
+            Log.i("Update Location called", myLocation.isGps_enabled() + "");
+            if (!myLocation.isGps_enabled()) {
+                swipeRefreshLayout.setRefreshing(false);
+                Methods.buildAlertMessageNoGps(this);
+            }
         } else {
+            if (swipeRefreshLayout.isRefreshing()) {
+                swipeRefreshLayout.setRefreshing(false);
+            }
             Toast.makeText(getApplicationContext(), getString(R.string.no_network_message),Toast.LENGTH_LONG).show();
         }
 
     }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         // Inflate the menu; this adds items to the action bar if it is present.
@@ -165,40 +198,47 @@ public class WeatherActivity extends AppCompatActivity {
         return true;
     }
 
-    MyLocation.LocationResult locationResult = new MyLocation.LocationResult(){
-        @Override
-        public void gotLocation(Location location){
-            swipeRefreshLayout.setRefreshing(true);
-            //fetching Weather data based on fetched location
-            Log.i("Location:", location.getLatitude() + "," + location.getLongitude());
-            if (retrofitCall != null){
-                retrofitCall.cancel();
-            }
-            retrofitCall = service.getWeather(Methods.PrepareQueryFromLocation(location));
-            retrofitCall.enqueue(new Callback<WeatherModel>() {
-
+    public void fetchWeatherData(Location location) {
+        if (!swipeRefreshLayout.isRefreshing()) {
+            swipeRefreshLayout.post(new Runnable() {
                 @Override
-                public void onResponse(Response<WeatherModel> response, Retrofit retrofit) {
-                    swipeRefreshLayout.setRefreshing(false);
-                    try {
-                        if (response.isSuccess()){
-                            WeatherModel weatherModel = response.body();
-                            //Updating the UI with latest weather data
-                            updateUI(weatherModel);
-                        }
-                    } catch (Exception e){
-                        e.printStackTrace();
-                    }
-                }
-
-                @Override
-                public void onFailure(Throwable t) {
-                    Toast.makeText(getApplicationContext(), getString(R.string.something_wrong_message),Toast.LENGTH_LONG).show();
-                    Log.i("Failed:",t.getMessage());
+                public void run() {
+                    swipeRefreshLayout.setRefreshing(true);
                 }
             });
         }
-    };
+
+        //fetching Weather data based on fetched location
+        Log.i("Location:", location.getLatitude() + "," + location.getLongitude());
+        if (retrofitCall != null) {
+            retrofitCall.cancel();
+        }
+        retrofitCall = service.getWeather(Methods.PrepareQueryFromLocation(location));
+        retrofitCall.enqueue(new Callback<WeatherModel>() {
+
+            @Override
+            public void onResponse(Response<WeatherModel> response, Retrofit retrofit) {
+                swipeRefreshLayout.setRefreshing(false);
+                try {
+                    if (response.isSuccess()) {
+                        WeatherModel weatherModel = response.body();
+                        //Updating the UI with latest weather data
+                        updateUI(weatherModel);
+                        PreferenceUtils.setWeatherModel(weatherModel);
+                        PreferenceUtils.setLastUpdatedTime(System.currentTimeMillis());
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+
+            @Override
+            public void onFailure(Throwable t) {
+                Toast.makeText(getApplicationContext(), getString(R.string.something_wrong_message), Toast.LENGTH_LONG).show();
+                Log.i("Failed:", t.getMessage());
+            }
+        });
+    }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
